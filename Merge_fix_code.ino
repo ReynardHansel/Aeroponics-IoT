@@ -11,8 +11,8 @@
 #define relayPin 12   // Relay pin
 
 // WiFi Credentials
-const char* ssid = "Sumber hegar 2";
-const char* password = "42038620";
+const char* ssid = "Sumber hegar 23";
+const char* password = "5nya8kali";
 
 // ThingSpeak credentials
 const char* serverHost = "api.thingspeak.com";
@@ -39,8 +39,14 @@ const unsigned long WIFI_RETRY_INTERVAL_MS  = 30000;
 unsigned long lastConnectAttempt = 0;
 
 // --- Relay control ---
-unsigned long lastRelayToggle = 0;
-bool relayState = false;  // false = OFF, true = ON
+unsigned long lastWateredTime = 0;
+const unsigned long wateringInterval = 3600000; // 1 hour in milliseconds
+// Pump run timer
+unsigned long pumpStartTime = 0;
+bool pumpRunning = false;
+const unsigned long PUMP_RUN_DURATION = 300000; // 5 minutes in milliseconds
+// To change how long the pump runs for after being triggered, modify PUMP_RUN_DURATION.
+// Example: for 2 minutes use 120000, for 10 minutes use 600000.
 
 // --- Helper: map WiFi.status() to readable string ---
 const char* wifiStatusToString(int s) {
@@ -53,6 +59,39 @@ const char* wifiStatusToString(int s) {
     case WL_CONNECTION_LOST: return "WL_CONNECTION_LOST";
     case WL_DISCONNECTED: return "WL_DISCONNECTED";
     default: return "UNKNOWN_STATUS";
+  }
+}
+
+void activateRelayPump() {
+  float temperature = dht.readTemperature();
+  unsigned long currentMillis = millis();
+
+  // Start pump if temperature threshold or watering interval reached
+  if (!pumpRunning && (temperature > 29.0 || (currentMillis - lastWateredTime >= wateringInterval))) {
+    digitalWrite(relayPin, HIGH); // Turn relay ON
+    pumpRunning = true;
+    pumpStartTime = currentMillis;
+    lastWateredTime = currentMillis; // record when we started watering
+    Serial.println("Relay turned ON (pump started)");
+  }
+
+  // If pump is running, check if we've reached the run duration
+  if (pumpRunning) {
+    if (currentMillis - pumpStartTime >= PUMP_RUN_DURATION) {
+      digitalWrite(relayPin, LOW); // Turn relay OFF after duration
+      pumpRunning = false;
+      Serial.println("Relay turned OFF (pump run complete)");
+    } else {
+      // Still running; optionally print remaining time occasionally
+      unsigned long remaining = PUMP_RUN_DURATION - (currentMillis - pumpStartTime);
+      // Print remaining time every 30 seconds to avoid spamming
+      static unsigned long lastRemainingPrint = 0;
+      if (currentMillis - lastRemainingPrint >= 30000) {
+        Serial.print("Pump running, ms remaining: ");
+        Serial.println(remaining);
+        lastRemainingPrint = currentMillis;
+      }
+    }
   }
 }
 
@@ -111,14 +150,7 @@ void setup() {
 }
 
 void loop() {
-  // Toggle relay every 2 seconds
-  if (millis() - lastRelayToggle >= 2000) {
-    relayState = !relayState;
-    digitalWrite(relayPin, relayState ? HIGH : LOW);
-    Serial.print("Relay turned ");
-    Serial.println(relayState ? "ON" : "OFF");
-    lastRelayToggle = millis();
-  }
+  activateRelayPump();
 
   // If not connected, retry WiFi periodically
   if (WiFi.status() != WL_CONNECTED) {
