@@ -1,3 +1,5 @@
+// TODO: Add startup pump logic
+
 #include <EEPROM.h>
 #include "GravityTDS.h"
 #include <DHT.h>
@@ -11,8 +13,8 @@
 #define relayPin 12   // Relay pin
 
 // WiFi Credentials
-const char* ssid = "Sumber hegar 23";
-const char* password = "5nya8kali";
+const char* ssid = "SUMBER HEGAR 2";
+const char* password = "42038620";
 
 // ThingSpeak credentials
 const char* serverHost = "api.thingspeak.com";
@@ -21,6 +23,7 @@ const char* apiKey = "MFK0BH6AACDDV427";
 WiFiClient client;
 DHT dht(DHTPIN, DHTTYPE);
 GravityTDS gravityTds;
+// PH4502C_Sensor ph4502c(PHPin, A4);
 
 // Variabel untuk PH
 const int ph_Pin = PHPin;
@@ -33,6 +36,7 @@ double TeganganPh;
 float PH4 = 3.81;
 float PH7 = 3.33;
 
+
 // --- Connection control ---
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
 const unsigned long WIFI_RETRY_INTERVAL_MS  = 30000;
@@ -40,13 +44,14 @@ unsigned long lastConnectAttempt = 0;
 
 // --- Relay control ---
 unsigned long lastWateredTime = 0;
-const unsigned long wateringInterval = 3600000; // 1 hour in milliseconds
-// Pump run timer
+const unsigned long wateringInterval = 3600000; // 1 hour
 unsigned long pumpStartTime = 0;
 bool pumpRunning = false;
-const unsigned long PUMP_RUN_DURATION = 300000; // 5 minutes in milliseconds
-// To change how long the pump runs for after being triggered, modify PUMP_RUN_DURATION.
-// Example: for 2 minutes use 120000, for 10 minutes use 600000.
+const unsigned long PUMP_RUN_DURATION = 300000; // 5 minutes
+
+// --- ThingSpeak upload control ---
+unsigned long lastUploadTime = 0;                 // ⬅️ New variable
+const unsigned long uploadInterval = 3600000;     // ⬅️ 1 hour interval
 
 // --- Helper: map WiFi.status() to readable string ---
 const char* wifiStatusToString(int s) {
@@ -66,25 +71,21 @@ void activateRelayPump() {
   float temperature = dht.readTemperature();
   unsigned long currentMillis = millis();
 
-  // Start pump if temperature threshold or watering interval reached
   if (!pumpRunning && (temperature > 29.0 || (currentMillis - lastWateredTime >= wateringInterval))) {
-    digitalWrite(relayPin, HIGH); // Turn relay ON
+    digitalWrite(relayPin, HIGH);
     pumpRunning = true;
     pumpStartTime = currentMillis;
-    lastWateredTime = currentMillis; // record when we started watering
+    lastWateredTime = currentMillis;
     Serial.println("Relay turned ON (pump started)");
   }
 
-  // If pump is running, check if we've reached the run duration
   if (pumpRunning) {
     if (currentMillis - pumpStartTime >= PUMP_RUN_DURATION) {
-      digitalWrite(relayPin, LOW); // Turn relay OFF after duration
+      digitalWrite(relayPin, LOW);
       pumpRunning = false;
       Serial.println("Relay turned OFF (pump run complete)");
     } else {
-      // Still running; optionally print remaining time occasionally
       unsigned long remaining = PUMP_RUN_DURATION - (currentMillis - pumpStartTime);
-      // Print remaining time every 30 seconds to avoid spamming
       static unsigned long lastRemainingPrint = 0;
       if (currentMillis - lastRemainingPrint >= 30000) {
         Serial.print("Pump running, ms remaining: ");
@@ -135,31 +136,35 @@ void setup() {
 
   dht.begin();
 
-  // Setup TDS
   gravityTds.setPin(TdsSensorPin);
   gravityTds.setAref(5.0);
   gravityTds.setAdcRange(1024);
   gravityTds.begin();
 
-  // Setup relay
   pinMode(relayPin, OUTPUT);
-  digitalWrite(relayPin, LOW); // ensure relay off at start
+  digitalWrite(relayPin, LOW);
 
-  // Connect WiFi
   attemptConnectWiFi();
+
+   // --- 🔹 Turn on pump once when device starts ---
+  Serial.println("Startup detected: turning on pump...");
+  digitalWrite(relayPin, HIGH);           // Turn relay ON
+  pumpRunning = true;
+  pumpStartTime = millis();
+  lastWateredTime = millis();             // record watering time
+  Serial.println("Pump started (startup cycle)");
 }
 
 void loop() {
   activateRelayPump();
 
-  // If not connected, retry WiFi periodically
   if (WiFi.status() != WL_CONNECTED) {
     if (millis() - lastConnectAttempt >= WIFI_RETRY_INTERVAL_MS) {
       attemptConnectWiFi();
     }
   }
 
-  // Read sensors
+  // --- Sensor readings ---
   float humidity = dht.readHumidity();
   float temperature = dht.readTemperature();
   gravityTds.update();
@@ -170,41 +175,38 @@ void loop() {
   PH_step = (PH4 - PH7) / 3.0;
   pHValue = 7.00 + ((PH7 - TeganganPh) / PH_step);
 
-  // Print sensor data
   Serial.print("Suhu: "); Serial.println(temperature);
   Serial.print("Kelembaban: "); Serial.println(humidity);
   Serial.print("TDS: "); Serial.println(tdsValue);
-  Serial.print("pH: "); Serial.println(pHValue, 2);
+  Serial.print("K value: "); Serial.println(gravityTds.getKvalue());
+  Serial.print("pH: "); Serial.println(pHValue);
 
-  // Print WiFi status
-  int currentStatus = WiFi.status();
-  Serial.print("WiFi status (now): ");
-  Serial.print(currentStatus);
-  Serial.print(" - ");
-  Serial.println(wifiStatusToString(currentStatus));
+  // --- ThingSpeak upload (every 1 hour) ---
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastUploadTime >= uploadInterval) {  // ⬅️ Upload interval check
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("Attempting ThingSpeak upload...");
+      if (client.connect(serverHost, 80)) {
+        String getData = "GET /update?api_key=";
+        getData += apiKey;
+        getData += "&field1=" + String(temperature);
+        getData += "&field2=" + String(humidity);
+        getData += "&field3=" + String(tdsValue);
+        getData += "&field4=" + String(pHValue, 2);
+        getData += " HTTP/1.1\r\nHost: ";
+        getData += serverHost;
+        getData += "\r\nConnection: close\r\n\r\n";
 
-  // Send to ThingSpeak if connected
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("Attempting ThingSpeak upload...");
-    if (client.connect(serverHost, 80)) {
-      String getData = "GET /update?api_key=";
-      getData += apiKey;
-      getData += "&field1=" + String(temperature);
-      getData += "&field2=" + String(humidity);
-      getData += "&field3=" + String(tdsValue);
-      getData += "&field4=" + String(pHValue, 2);
-      getData += " HTTP/1.1\r\nHost: ";
-      getData += serverHost;
-      getData += "\r\nConnection: close\r\n\r\n";
-
-      client.print(getData);
-      Serial.println("Data sent to ThingSpeak");
+        client.print(getData);
+        Serial.println("Data sent to ThingSpeak!");
+      } else {
+        Serial.println("Could not connect to ThingSpeak.");
+      }
+      client.stop();
+      lastUploadTime = currentMillis;  // ⬅️ Reset timer after upload
     } else {
-      Serial.println("Could not connect to ThingSpeak.");
+      Serial.println("Skipping ThingSpeak upload (WiFi not connected).");
     }
-    client.stop();
-  } else {
-    Serial.println("Skipping ThingSpeak upload (WiFi not connected).");
   }
 
   delay(2000);
