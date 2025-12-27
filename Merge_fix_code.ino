@@ -16,12 +16,12 @@
 #define RELAY_OFF HIGH
 
 // --- 📶 CREDENTIALS ---
-const char* ssid = "sugar3";
-const char* password = "42332363";
+const char* ssid = "x";
+const char* password = "y";
 
 // ThingSpeak credentials
 const char* serverHost = "api.thingspeak.com";
-const char* apiKey = "MFK0BH6AACDDV427";
+const char* apiKey = "z";
 
 WiFiClient client;
 DHT dht(DHTPIN, DHTTYPE);
