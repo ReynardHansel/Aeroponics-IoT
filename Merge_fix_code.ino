@@ -16,12 +16,12 @@
 #define RELAY_OFF HIGH
 
 // --- 📶 CREDENTIALS ---
-const char* ssid = "sugar3";
-const char* password = "42332363";
+const char* ssid = "x";
+const char* password = "y";
 
 // ThingSpeak credentials
 const char* serverHost = "api.thingspeak.com";
-const char* apiKey = "MFK0BH6AACDDV427";
+const char* apiKey = "z";
 
 WiFiClient client;
 DHT dht(DHTPIN, DHTTYPE);
@@ -33,8 +33,8 @@ float pHValue = 0;
 float PH_step;
 int nilai_analog_PH;
 double TeganganPh;
-float PH4 = 3.81;
-float PH7 = 3.33;
+float PH4 = 3.73;
+float PH7 = 3.40;
 
 // --- 📡 CONNECTION CONTROL ---
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
@@ -56,7 +56,7 @@ bool pumpRunning = false;
 
 // --- ☁️ THINGSPEAK UPLOAD CONTROL ---
 unsigned long lastUploadTime = 0;
-const unsigned long uploadInterval = 900000;    // 15 min
+const unsigned long uploadInterval = 600000;    // 10 min
 
 // --- 🛠 HELPER FUNCTIONS ---
 const char* wifiStatusToString(int s) {
@@ -112,6 +112,27 @@ void printPumpCountdown(unsigned long currentRuntime) {
   }
 }
 
+// --- 📊 UNIFIED SENSOR READING FUNCTION ---
+struct SensorReading {
+  float temperature;
+  float humidity;
+  float tds;
+  float ph;
+};
+
+SensorReading readSensors() {
+  SensorReading reading;
+  reading.temperature = dht.readTemperature();
+  reading.humidity = dht.readHumidity();
+  gravityTds.setTemperature(reading.temperature);
+  gravityTds.update();
+  reading.tds = gravityTds.getTdsValue();
+  int adc = analogRead(ph_Pin);
+  float voltage = 5.0 / 1024.0 * adc;
+  reading.ph = (7.00 + ((PH7 - voltage) / PH_step)) - 2;
+  return reading;
+}
+
 // --- 🧠 CORE PUMP LOGIC ---
 void managePumpLoop() {
   unsigned long currentMillis = millis();
@@ -165,15 +186,13 @@ void attemptConnectWiFi() {
   }
 }
 
-// --- 🚀 SETUP ---
 void setup() {
   Serial.begin(9600);
   while (!Serial) { ; }
   Serial.println("\nSystem Startup...");
   
-  randomSeed(analogRead(A5)); 
-
   dht.begin();
+  PH_step = (PH4 - PH7) / 3.0;
   gravityTds.setPin(TdsSensorPin);
   gravityTds.setAref(5.0);
   gravityTds.setAdcRange(1024);
@@ -194,9 +213,7 @@ void setup() {
   sendPumpStatus(1);
 }
 
-// --- 🔄 LOOP ---
 void loop() {
-  managePumpLoop();
 
   if (WiFi.status() != WL_CONNECTED) {
     if (millis() - lastConnectAttempt >= WIFI_RETRY_INTERVAL_MS) {
@@ -204,23 +221,14 @@ void loop() {
     }
   }
 
-  // --- INSTANT READINGS (Serial Monitor Only) ---
-  // Print these so to see the device is alive.
-  // Not used for uploads anymore.
-  gravityTds.update(); // Keep the TDS internal buffer happy
-  float instTemp = dht.readTemperature();
-  float instHum = dht.readHumidity();
-  float instTds = gravityTds.getTdsValue();
-  
-  // Simple pH calculation for display
-  int adc = analogRead(ph_Pin);
-  float voltage = 5.0 / 1024.0 * adc;
-  float instPh = (7.00 + ((PH7 - voltage) / PH_step)) - 0.5;
+  managePumpLoop();
 
-  Serial.print("[Instant] T:"); Serial.print(instTemp);
-  Serial.print(" | H:"); Serial.print(instHum);
-  Serial.print(" | TDS:"); Serial.print(instTds);
-  Serial.print(" | pH:"); Serial.println(instPh);
+  // --- INSTANT READINGS (Serial Monitor Only) ---
+  SensorReading instantReading = readSensors();
+  Serial.print("[Instant] T:"); Serial.print(instantReading.temperature);
+  Serial.print(" | H:"); Serial.print(instantReading.humidity);
+  Serial.print(" | TDS:"); Serial.print(instantReading.tds);
+  Serial.print(" | pH:"); Serial.println(instantReading.ph);
 
   // --- 📡 UPLOAD LOGIC (BURST SAMPLING) ---
   unsigned long currentMillis = millis();
@@ -244,21 +252,21 @@ void loop() {
           gravityTds.update(); 
         }
 
-        // 2. Read Sensors
-        float t = dht.readTemperature();
-        float h = dht.readHumidity();
-        float tds = gravityTds.getTdsValue();
-        
-        int rawPh = analogRead(ph_Pin);
-        float vPh = 5.0 / 1024.0 * rawPh;
-        float ph = (7.00 + ((PH7 - vPh) / PH_step)) - 0.5;
+        // 2. Read Sensors using unified function
+        SensorReading reading = readSensors();
 
-        // 3. Accumulate (Check for valid readings)
-        if (!isnan(t) && !isnan(h)) {
-          totalTemp += t;
-          totalHum += h;
-          totalTds += tds;
-          totalPh += ph;
+        // 3. Print sample values
+        Serial.print("  T:"); Serial.print(reading.temperature);
+        Serial.print(" | H:"); Serial.print(reading.humidity);
+        Serial.print(" | TDS:"); Serial.print(reading.tds);
+        Serial.print(" | pH:"); Serial.println(reading.ph);
+        
+        // 4. Accumulate (Check for valid readings)
+        if (reading.isValid) {
+          totalTemp += reading.temperature;
+          totalHum += reading.humidity;
+          totalTds += reading.tds;
+          totalPh += reading.ph;
         } else {
           Serial.println("  ⚠️ Error reading sensor, skipping sample.");
           i--; // Retry this sample
@@ -274,6 +282,7 @@ void loop() {
       Serial.println(">> Averages Calculated:");
       Serial.print("   Avg Temp: "); Serial.println(avgTemp);
       Serial.print("   Avg TDS: "); Serial.println(avgTds);
+      Serial.print("   Avg pH: "); Serial.println(avgPh);
 
       // 📤 UPLOAD
       Serial.println("Attempting ThingSpeak SENSOR upload...");
