@@ -33,8 +33,8 @@ float pHValue = 0;
 float PH_step;
 int nilai_analog_PH;
 double TeganganPh;
-float PH4 = 3.73;
-float PH7 = 3.40;
+float PH4 = 3.69;
+float PH7 = 3.33;
 
 // --- 📡 CONNECTION CONTROL ---
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
@@ -56,7 +56,15 @@ bool pumpRunning = false;
 
 // --- ☁️ THINGSPEAK UPLOAD CONTROL ---
 unsigned long lastUploadTime = 0;
-const unsigned long uploadInterval = 600000;    // 10 min
+const unsigned long uploadInterval = 900000;    // 10 min
+
+// --- 📊 SENSOR READING STRUCT ---
+struct SensorReading {
+  float temperature;
+  float humidity;
+  float tds;
+  float ph;
+};
 
 // --- 🛠 HELPER FUNCTIONS ---
 const char* wifiStatusToString(int s) {
@@ -113,13 +121,6 @@ void printPumpCountdown(unsigned long currentRuntime) {
 }
 
 // --- 📊 UNIFIED SENSOR READING FUNCTION ---
-struct SensorReading {
-  float temperature;
-  float humidity;
-  float tds;
-  float ph;
-};
-
 SensorReading readSensors() {
   SensorReading reading;
   reading.temperature = dht.readTemperature();
@@ -129,7 +130,7 @@ SensorReading readSensors() {
   reading.tds = gravityTds.getTdsValue();
   int adc = analogRead(ph_Pin);
   float voltage = 5.0 / 1024.0 * adc;
-  reading.ph = (7.00 + ((PH7 - voltage) / PH_step)) - 2;
+  reading.ph = (7.00 + ((PH7 - voltage) / PH_step));
   return reading;
 }
 
@@ -240,7 +241,7 @@ void loop() {
       float totalHum = 0;
       float totalPh = 0;
       float totalTds = 0;
-      int samples = 5; // We will take 10 samples
+      int samples = 5;
 
       // ⏱️ BURST LOOP: Gather 5 samples, 2 seconds apart
       for (int i = 0; i < samples; i++) {
@@ -261,16 +262,11 @@ void loop() {
         Serial.print(" | TDS:"); Serial.print(reading.tds);
         Serial.print(" | pH:"); Serial.println(reading.ph);
         
-        // 4. Accumulate (Check for valid readings)
-        if (reading.isValid) {
-          totalTemp += reading.temperature;
-          totalHum += reading.humidity;
-          totalTds += reading.tds;
-          totalPh += reading.ph;
-        } else {
-          Serial.println("  ⚠️ Error reading sensor, skipping sample.");
-          i--; // Retry this sample
-        }
+        // 4. Accumulate readings
+        totalTemp += reading.temperature;
+        totalHum += reading.humidity;
+        totalTds += reading.tds;
+        totalPh += reading.ph;
       }
 
       // ➗ CALCULATE AVERAGES
