@@ -1,7 +1,7 @@
 #include <EEPROM.h>
 #include "GravityTDS.h"
 #include <DHT.h>
-#include <WiFiS3.h>   // UNO R4 WiFi library
+#include <WiFiS3.h>
 
 // --- ⚙️ PIN & SENSOR CONFIG ---
 #define DHTPIN 2
@@ -56,7 +56,7 @@ bool pumpRunning = false;
 
 // --- ☁️ THINGSPEAK UPLOAD CONTROL ---
 unsigned long lastUploadTime = 0;
-const unsigned long uploadInterval = 900000;    // 10 min
+const unsigned long uploadInterval = 3600000;    // 60 min
 
 // --- 📊 SENSOR READING STRUCT ---
 struct SensorReading {
